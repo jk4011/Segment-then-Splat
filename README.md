@@ -54,7 +54,7 @@ bash autoseg.sh
 # Object-specific Initialization
 cd ../..
 python ./helpers/preprocess_mask.py
-python object_specific_initialization.py
+python ./helpers/object_specific_initialization.py
 ```
 We provide preprocessed lerf-ovs dataset with tracking results [here](https://drive.google.com/drive/folders/18f9JKqjcgEw-gwBG3z-nk85jqGC7WfcG?usp=sharing).
 ### Scene Reconstuction
