@@ -34,7 +34,7 @@ We provide preprocessed lerf-ovs dataset [here](https://drive.google.com/drive/f
 ### Environment
 
 ```shell
-git clone https://github.com/ingra14m/Deformable-3D-Gaussians --recursive
+git clone https://github.com/luyr/Segment-then-Splat --recursive
 cd Segment-then-Splat
 
 conda create -n segment_then_splat python=3.10
