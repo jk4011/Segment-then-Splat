@@ -44,6 +44,7 @@ pip install torch==2.3.1 torchvision==0.18.1 torchaudio==2.3.1 --index-url https
 
 pip install -r requirements.txt --no-build-isolation
 ```
+Follow the instructions in thrid_party/AutoSeg-SAM2/ to install segment-anything-1 nad segment-anything-2, and download checkpoints.
 
 ### Object Tracking & Object-specific Initialization (To be verified)
 Remember to modify the data path inside ```autoseg.sh```.
