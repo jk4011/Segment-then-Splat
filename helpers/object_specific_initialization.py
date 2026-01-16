@@ -45,10 +45,10 @@ def load_train_test_split(scene_root):
     
 def load_multiview_masks(scene_root):
     # load large mask
-    mask_dir = os.path.join(scene_root, "multiview_masks_large")
+    mask_dir = os.path.join(scene_root, "multiview_masks_default")
     object_dirs = sorted([os.path.join(mask_dir, d) for d in os.listdir(mask_dir)])
     all_masks_large = [] # num_objects x num_masks x H x W
-    for object_dir in tqdm(object_dirs, desc="Loading large masks"):
+    for object_dir in tqdm(object_dirs, desc="Loading default masks"):
         masks = []
         mask_list = sorted(os.listdir(object_dir))
         masks = [cv2.imread(os.path.join(object_dir, mask), cv2.IMREAD_GRAYSCALE) for mask in mask_list]
