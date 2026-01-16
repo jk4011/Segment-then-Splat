@@ -48,14 +48,15 @@ Follow the instructions in thrid_party/AutoSeg-SAM2/ to install segment-anything
 
 ### Object Tracking & Object-specific Initialization (To be verified)
 Remember to modify the data path inside ```autoseg.sh```.
+For object_specific_initialization.py, you will need to run comap first. Refer to [3DGS](https://github.com/graphdeco-inria/gaussian-splatting?tab=readme-ov-file#processing-your-own-scenes) for more details.
 ```shell
 # Object Tracking
 cd thrid_party/AutoSeg-SAM2/
 bash autoseg.sh
 # Object-specific Initialization
 cd ../..
-python ./helpers/preprocess_mask.py
-python ./helpers/object_specific_initialization.py
+python ./helpers/preprocess_mask.py --mask_root third_party/AutoSeg-SAM2/output/ramen --out_root <data_dir>/lerf_ovs/ramen/ --image_path <data_dir>/lerf_ovs/ramen/images
+python ./helpers/object_specific_initialization.py --scene_root <data_dir>/lerf_ovs/ramen/
 ```
 We provide preprocessed lerf-ovs dataset with tracking results [here](https://drive.google.com/drive/folders/18f9JKqjcgEw-gwBG3z-nk85jqGC7WfcG?usp=sharing).
 ### Scene Reconstuction
