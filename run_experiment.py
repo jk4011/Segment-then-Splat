@@ -15,40 +15,48 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 AUTOSEG_DIR = os.path.join(PROJECT_ROOT, "third_party", "AutoSeg-SAM2")
 PYTHON = "/opt/conda/envs/segment_then_splat/bin/python"
 
+DEFAULT_DATA_ROOT = "/root/data1/jinhyeok/seg123/dataset"
+
 DATASETS = {
     "lerf": {
-        "root": "/root/data1/jinhyeok/seg123/dataset/lerf_ovs",
+        "root_suffix": "lerf_ovs",
         "scenes": ["figurines", "ramen", "teatime", "waldo_kitchen"],
         "label_format": "lerf",
-        "label_root": "/root/data1/jinhyeok/seg123/dataset/lerf_ovs/label",
+        "label_suffix": "lerf_ovs/label",
         "image_ext": ".jpg",
     },
     "3d_ovs": {
-        "root": "/root/data1/jinhyeok/seg123/dataset/3d_ovs",
+        "root_suffix": "3d_ovs",
         "scenes": ["bed", "bench", "blue_sofa", "covered_desk", "lawn", "office_desk", "room", "snacks", "sofa", "table"],
         "label_format": "3d_ovs",
         "image_ext": ".jpg",
     },
     "dl3dv": {
-        "root": "/root/data1/jinhyeok/seg123/dataset/dl3dv",
+        "root_suffix": "dl3dv",
         "scenes": ["furniture_shop", "office", "park_bench_car", "road_car_building"],
         "label_format": "lerf",
-        "label_root": "/root/data1/jinhyeok/seg123/dataset/dl3dv/label",
+        "label_suffix": "dl3dv/label",
         "image_ext": ".png",
     },
 }
 
+DATA_ROOT = DEFAULT_DATA_ROOT  # overridden by --data_root arg
+
+
+def _resolve_root(dataset_name):
+    return os.path.join(DATA_ROOT, DATASETS[dataset_name]["root_suffix"])
+
 
 def get_scene_dir(dataset_name, scene_name):
-    return os.path.join(DATASETS[dataset_name]["root"], scene_name)
+    return os.path.join(_resolve_root(dataset_name), scene_name)
 
 
 def get_label_dir(dataset_name, scene_name):
     ds = DATASETS[dataset_name]
     if ds["label_format"] == "3d_ovs":
-        return os.path.join(ds["root"], scene_name, "segmentations")
+        return os.path.join(_resolve_root(dataset_name), scene_name, "segmentations")
     else:
-        return os.path.join(ds["label_root"], scene_name, "gt")
+        return os.path.join(DATA_ROOT, ds["label_suffix"], scene_name, "gt")
 
 
 def get_output_dir(scene_name):
@@ -88,7 +96,7 @@ def create_train_test_split(dataset_name, scene_name):
                 test_frames.add(d + ds["image_ext"])
         test_list = sorted(test_frames & set(all_images))
     else:
-        label_dir = os.path.join(ds["label_root"], scene_name, "gt")
+        label_dir = os.path.join(DATA_ROOT, ds["label_suffix"], scene_name, "gt")
         test_frames = set()
         if os.path.exists(label_dir):
             for d in os.listdir(label_dir):
@@ -316,10 +324,14 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpus", type=str, default="0,1", help="Comma-separated GPU IDs")
+    parser.add_argument("--data_root", type=str, default=DEFAULT_DATA_ROOT, help="Root directory containing all datasets")
     parser.add_argument("--datasets", type=str, default="lerf,3d_ovs,dl3dv", help="Comma-separated dataset names")
     parser.add_argument("--max_parallel", type=int, default=2, help="Max parallel scenes")
     parser.add_argument("--scene", type=str, default=None, help="Run single scene (format: dataset/scene)")
     args = parser.parse_args()
+
+    global DATA_ROOT
+    DATA_ROOT = args.data_root
 
     gpu_ids = [int(g) for g in args.gpus.split(",")]
     dataset_names = [d.strip() for d in args.datasets.split(",")]
