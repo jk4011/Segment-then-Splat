@@ -10,6 +10,8 @@
 #
 
 import os
+import json
+import time
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim, kl_divergence
@@ -45,6 +47,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
 
     iter_start = torch.cuda.Event(enable_timing=True)
     iter_end = torch.cuda.Event(enable_timing=True)
+
+    t_base_end = torch.cuda.Event(enable_timing=True)
+    t_obj_end = torch.cuda.Event(enable_timing=True)
+    total_base_time_ms = 0.0
+    total_obj_time_ms = 0.0
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -106,6 +113,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        t_base_end.record()
         # random sample 5 objects to render
         object_masks = viewpoint_cam.object_masks
         default_masks = object_masks['default']
@@ -197,6 +205,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
             except AssertionError:
                 print(f"default object {obj_id} has zero points in the scene, skip")
                 pass
+        t_obj_end.record()
+        torch.cuda.synchronize()
+        total_base_time_ms += iter_start.elapsed_time(t_base_end)
+        total_obj_time_ms += t_base_end.elapsed_time(t_obj_end)
         loss.backward()
 
         iter_end.record()
@@ -256,6 +268,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
                 deform.optimizer.zero_grad()
                 deform.update_learning_rate(iteration)
 
+    timing_data = {
+        "base_render_loss_sec": total_base_time_ms / 1000.0,
+        "obj_render_loss_sec": total_obj_time_ms / 1000.0,
+        "iterations": opt.iterations,
+    }
+    timing_path = os.path.join(dataset.model_path, "timing.json")
+    with open(timing_path, "w") as f:
+        json.dump(timing_data, f, indent=2)
+    print(f"Timing saved to {timing_path}")
     print("Best PSNR = {} in Iteration {}".format(best_psnr, best_iteration))
 
 

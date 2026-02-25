@@ -1,4 +1,6 @@
 import os
+import json
+import time
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -418,12 +420,9 @@ if __name__ == '__main__':
         crop_n_points_downscale_factor=1,
         min_mask_region_area=100,
     )
-    # scan all the JPEG frame names in this directory
-    # frame_names = [
-    #     p for p in os.listdir(video_dir)
-    #     if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG"]
-    # ]
-    # frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
+    torch.cuda.synchronize()
+    _inference_start_time = time.time()
+
     frame_names = [
         p for p in os.listdir(video_dir)
         if os.path.splitext(p)[-1] in [".jpg", ".jpeg", ".JPG", ".JPEG", ".png"]
@@ -576,4 +575,11 @@ if __name__ == '__main__':
 
         save_masks(out_mask_list, out_frame_idx,save_dir)
         save_masks_npy(out_mask_list, out_frame_idx,save_dir)
-    
+
+    torch.cuda.synchronize()
+    _inference_elapsed = time.time() - _inference_start_time
+    _timing_path = os.path.join(base_dir, f"sam_inference_time_{level}.json")
+    with open(_timing_path, "w") as f:
+        json.dump({"sam_inference_sec": _inference_elapsed, "level": level}, f, indent=2)
+    logger.info(f"SAM inference time ({level}): {_inference_elapsed:.1f}s, saved to {_timing_path}")
+
