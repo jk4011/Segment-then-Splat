@@ -24,6 +24,7 @@ from gaussian_renderer import GaussianModel
 import imageio
 import numpy as np
 import time
+import json
 
 
 def render_set(model_path, load2gpu_on_the_fly, is_6dof, name, iteration, views, gaussians, pipeline, background, deform, is_deform, obj_id, obj_level):
@@ -418,6 +419,9 @@ def render_objs(dataset: ModelParams, iteration: int, pipeline: PipelineParams, 
         
         obj_id_dict = {'default': default_obj_ids, 'middle': middle_obj_ids, 'small': small_obj_ids}
 
+        torch.cuda.synchronize()
+        render_start = time.time()
+
         if not skip_train:
             # first render entire scene
             render_func(dataset.model_path, dataset.load2gpu_on_the_fly, dataset.is_6dof, f"train", scene.loaded_iter,
@@ -445,6 +449,13 @@ def render_objs(dataset: ModelParams, iteration: int, pipeline: PipelineParams, 
                                     background, deform, dataset.deform, obj_id, obj_level)
                     except:
                         pass
+
+        torch.cuda.synchronize()
+        render_time = time.time() - render_start
+        render_timing_path = os.path.join(dataset.model_path, "render_timing.json")
+        with open(render_timing_path, "w") as f:
+            json.dump({"render_sec": render_time}, f, indent=2)
+        print(f"Render timing saved to {render_timing_path}: {render_time:.1f}s")
 
 if __name__ == "__main__":
     # Set up command line argument parser

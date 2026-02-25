@@ -3,7 +3,6 @@ import json
 import time
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
 from PIL import Image
 from tqdm import tqdm
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
@@ -25,66 +24,28 @@ from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 
 
 
-def show_anns(anns, borders=True):
-    if len(anns) == 0:
-        return
-    sorted_anns = sorted(anns, key=(lambda x: x['area']), reverse=True)
-    ax = plt.gca()
-    ax.set_autoscale_on(False)
-
-    img = np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1], 4))
-    img[:,:,3] = 0
-    for ann in sorted_anns:
-        m = ann['segmentation']
-        color_mask = np.concatenate([np.random.random(3), [0.5]])
-        img[m] = color_mask 
-        if borders:
-            import cv2
-            contours, _ = cv2.findContours(m.astype(np.uint8),cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE) 
-            # Try to smooth contours
-            contours = [cv2.approxPolyDP(contour, epsilon=0.01, closed=True) for contour in contours]
-            cv2.drawContours(img, contours, -1, (0,0,1,0.4), thickness=1) 
-
-    ax.imshow(img)
-
 def mask_nms(masks, scores, iou_thr=0.7, score_thr=0.1, inner_thr=0.2, **kwargs):
-    """
-    Perform mask non-maximum suppression (NMS) on a set of masks based on their scores.
-    
-    Args:
-        masks (torch.Tensor): has shape (num_masks, H, W)
-        scores (torch.Tensor): The scores of the masks, has shape (num_masks,)
-        iou_thr (float, optional): The threshold for IoU.
-        score_thr (float, optional): The threshold for the mask scores.
-        inner_thr (float, optional): The threshold for the overlap rate.
-        **kwargs: Additional keyword arguments.
-    Returns:
-        selected_idx (torch.Tensor): A tensor representing the selected indices of the masks after NMS.
-    """
-
+    """Vectorized mask NMS using batched intersection computation."""
     scores, idx = scores.sort(0, descending=True)
     num_masks = idx.shape[0]
-    
+
     masks_ord = masks[idx.view(-1), :]
     masks_area = torch.sum(masks_ord, dim=(1, 2), dtype=torch.float)
 
-    iou_matrix = torch.zeros((num_masks,) * 2, dtype=torch.float, device=masks.device)
-    inner_iou_matrix = torch.zeros((num_masks,) * 2, dtype=torch.float, device=masks.device)
-    
-    for i in range(num_masks):
-        for j in range(i, num_masks):
-            intersection = torch.sum(torch.logical_and(masks_ord[i], masks_ord[j]), dtype=torch.float)
-            union = torch.sum(torch.logical_or(masks_ord[i], masks_ord[j]), dtype=torch.float)
-            iou = intersection / union
-            iou_matrix[i, j] = iou
-            # select mask pairs that may have a severe internal relationship
-            if intersection / masks_area[i] < 0.5 and intersection / masks_area[j] >= 0.85:
-                inner_iou = 1 - (intersection / masks_area[j]) * (intersection / masks_area[i])
-                inner_iou_matrix[i, j] = inner_iou
+    # Vectorized pairwise intersection via matrix multiplication
+    flat = masks_ord.reshape(num_masks, -1).float()
+    intersection = flat @ flat.T
 
-            if intersection / masks_area[i] >= 0.85 and intersection / masks_area[j] < 0.5:
-                inner_iou = 1 - (intersection / masks_area[j]) * (intersection / masks_area[i])
-                inner_iou_matrix[j, i] = inner_iou
+    area_i = masks_area.unsqueeze(1).clamp(min=1)
+    area_j = masks_area.unsqueeze(0).clamp(min=1)
+    union = area_i + area_j - intersection
+    iou_matrix = intersection / union
+
+    ratio_i = intersection / area_i
+    ratio_j = intersection / area_j
+    inner_iou = 1.0 - ratio_i * ratio_j
+    cond = (ratio_i < 0.5) & (ratio_j >= 0.85)
+    inner_iou_matrix = torch.where(cond, inner_iou, torch.zeros_like(inner_iou))
 
     iou_matrix.triu_(diagonal=1)
     iou_max, _ = iou_matrix.max(dim=0)
@@ -92,13 +53,12 @@ def mask_nms(masks, scores, iou_thr=0.7, score_thr=0.1, inner_thr=0.2, **kwargs)
     inner_iou_max_u, _ = inner_iou_matrix_u.max(dim=0)
     inner_iou_matrix_l = torch.tril(inner_iou_matrix, diagonal=1)
     inner_iou_max_l, _ = inner_iou_matrix_l.max(dim=0)
-    
+
     keep = iou_max <= iou_thr
     keep_conf = scores > score_thr
     keep_inner_u = inner_iou_max_u <= 1 - inner_thr
     keep_inner_l = inner_iou_max_l <= 1 - inner_thr
-    
-    # If there are no masks with scores above threshold, the top 3 masks are selected
+
     if keep_conf.sum() == 0:
         index = scores.topk(3).indices
         keep_conf[index, 0] = True
@@ -113,7 +73,6 @@ def mask_nms(masks, scores, iou_thr=0.7, score_thr=0.1, inner_thr=0.2, **kwargs)
     keep *= keep_inner_l
 
     selected_idx = idx[keep]
-    # import ipdb; ipdb.set_trace()
     return selected_idx
 
 def filter(keep: torch.Tensor, masks_result) -> None:
@@ -137,17 +96,6 @@ def masks_update(*args, **kwargs):
 
         masks_new += (masks_lvl,)
     return masks_new
-
-def show_mask(mask, ax, obj_id=None, random_color=False):
-    if random_color:
-        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
-    else:
-        cmap = plt.get_cmap("tab20")
-        cmap_idx = 0 if obj_id is None else obj_id
-        color = np.array([*cmap(cmap_idx)[:3], 0.6])
-    h, w = mask.shape[-2:]
-    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-    ax.imshow(mask_image)
 
 def save_mask(mask,frame_idx,save_dir):
     image_array = (mask * 255).astype(np.uint8)
@@ -448,8 +396,14 @@ if __name__ == '__main__':
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             masks_default, masks_s, masks_m, masks_l = mask_generator.generate(image)
             if args.postnms:
-                masks_default, masks_s, masks_m, masks_l = \
-                    masks_update(masks_default, masks_s, masks_m, masks_l, iou_thr=0.8, score_thr=0.7, inner_thr=0.5)
+                if level == 'default':
+                    masks_default, masks_s, masks_m, masks_l = masks_update(masks_default, masks_s, masks_m, masks_l, iou_thr=0.8, score_thr=0.7, inner_thr=0.5)
+                elif level == 'small':
+                    masks_s, = masks_update(masks_s, iou_thr=0.8, score_thr=0.7, inner_thr=0.5)
+                elif level == 'middle':
+                    masks_m, masks_s = masks_update(masks_m, masks_s, iou_thr=0.8, score_thr=0.7, inner_thr=0.5)
+                elif level == 'large':
+                    masks_l, masks_s, masks_m = masks_update(masks_l, masks_s, masks_m, iou_thr=0.8, score_thr=0.7, inner_thr=0.5)
             if level == 'default':
                 masks = [mask for mask in masks_default]
                 other_masks = [mask for mask in masks_l] + [mask for mask in masks_m] + [mask for mask in masks_s] 
@@ -511,7 +465,6 @@ if __name__ == '__main__':
         # video_segments contains the per-frame segmentation results
         
         vis_frame_stride = args.detect_stride
-        plt.close("all")
         save_dir = os.path.join(base_dir,level,f"mask_each_frame_sam2")
         os.makedirs(save_dir,exist_ok=True)
         os.makedirs(os.path.join(save_dir,f"now_frame_{now_frame}"),exist_ok=True)
@@ -519,34 +472,16 @@ if __name__ == '__main__':
         out_frame_idx = now_frame+vis_frame_stride
         if out_frame_idx >= len(frame_names):
             break
-        # 创建一个新的图形对象
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.set_title(f"frame {out_frame_idx}")
-        
-        # 显示图像
-        img_path = os.path.join(video_dir, frame_names[out_frame_idx])
-        ax.imshow(Image.open(img_path))
-        # 显示分割掩码
         out_mask_list = []
         for out_obj_id, out_mask in video_segments[out_frame_idx].items():
-            idx_save_dir = os.path.join(save_dir,f"obj_{out_obj_id:02}")
-            # os.makedirs(idx_save_dir,exist_ok=True)
-            # import ipdb; ipdb.set_trace()
-            show_mask(out_mask, ax, obj_id=out_obj_id,random_color=False)
             out_mask_list.append(out_mask)
-        
+
         no_mask_ratio = cal_no_mask_area_ratio(out_mask_list)
         if now_frame == 0:
             mask_ratio_thresh = no_mask_ratio
 
         save_masks(out_mask_list, out_frame_idx,os.path.join(save_dir,f"now_frame_{now_frame}"))
         save_masks_npy(out_mask_list, out_frame_idx,os.path.join(save_dir,f"now_frame_{now_frame}"))
-        
-        # 保存图像
-        plt.savefig(os.path.join(save_dir, f"frame_{out_frame_idx}.png"))
-        
-        # 关闭当前图形对象，释放内存
-        plt.close(fig)
         if no_mask_ratio > mask_ratio_thresh + 0.01:
             masks_from_prev = out_mask_list
             mask_ratio_thresh = no_mask_ratio
@@ -566,10 +501,6 @@ if __name__ == '__main__':
         for out_obj_id, out_mask in video_segments[out_frame_idx].items():
             out_mask_list.append(out_mask)
         
-        # 显示图像
-        img_path = os.path.join(video_dir, frame_names[out_frame_idx])
-        ax.imshow(Image.open(img_path))
-
         no_mask_ratio = cal_no_mask_area_ratio(out_mask_list)
         logger.info(no_mask_ratio)
 
